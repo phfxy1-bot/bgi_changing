@@ -31,5 +31,11 @@
       "3"
     ],
     "default": "2"
+  },
+  {
+    "name": "delegate_dialogue",
+    "type": "checkbox",
+    "label": "对话交给 BGI「自动剧情」推进（推荐勾选；取消则由脚本自己点）",
+    "default": true
   }
 ]
