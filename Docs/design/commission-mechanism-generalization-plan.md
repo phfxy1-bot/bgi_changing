@@ -142,3 +142,95 @@
 | 日期 | 阶段 | 结论 / 产出 | 是否通过验收 |
 |---|---|---|---|
 | 2026-11-18 | P0 脚手架 | 建立 `commission-samples/` 目录规范与标注表、统一口径提示词（`tools/commission-p0/prompt.md`）、校验/分类/混淆矩阵工具（`tools/commission-p0/p0_tool.py`）。工具链路已用合成样本与本地 mock 端点验证，未跑真实样本与模型 | 不适用：无样本、无模型通道，未产出准确率 |
+| 2026-11-19 | T 轨道原型 | `js/quest-watch/` 落地：目标解析、追踪栏监听、目标执行器、导演层与 manifest；解析规则单测全通过 | 运行验证待做（T1/T2） |
+
+## 11. T 轨道：任务变更驱动（QuestWatch）
+
+状态：原型已落地，待运行验证。P0 需要样本而样本采集耗时；本轨道不依赖新样本、不改主程序，且运行日志能反哺 P0 语料。
+
+### 11.1 现状缺口
+
+- `js/AutoStoryLoader/main.js` 按预编排的 `process.json` 执行步骤：`对话 / 地图追踪 / 追踪委托 / 按键 / 等待返回主界面 / 自动任务 / 战斗 / 暂停`。对话只由 `AutoSkip` 实时触发器加速，**脚本自身不感知对话结束后任务栏目标是否变化**，于是"对话结束、任务切换"这一段断链。
+  - `processCommissionTracking`（L202-227）已实现追踪委托，但 `StepProcessorFactory`（L459-515）没有注册 `追踪委托`，是未接通的挂载点。
+- `js/AutoCommissionNova` 已有委托面板 4 位 OCR、完成状态判定、`停止追踪` 文案检测、追踪图标视觉伺服。
+- 主程序遗留 `GameTask/AutoSkip/AutoTrackTask.cs`：任务栏 OCR（小地图下方 300×100）、解析距离、>150m 经任务面板传送、V 键追踪、蓝点视觉伺服。调用点已注释（`TaskSettingsPageViewModel.cs` L745），代码可作算法参考。
+
+### 11.2 设计：四个组件
+
+```
+1Hz 截图/OCR → QuestWatch      任务栏 + 交互提示文本指纹
+                    │ 变化事件 {text, distance, signature}
+              ObjectiveParser   关键词 → 目标类型（封闭枚举）
+                    │ {type, target, distance}
+              ObjectiveRunner   追踪 + 导航 + 到点交互
+                    │ 成功 / 超时
+              Director          与 step 列表融合、超时与放弃
+```
+
+目标类型枚举（v1 关键词表，封闭集合）：
+
+| 文本特征 | type | 动作 |
+|---|---|---|
+| 前往 / 到达 / 移动至 + 距离 | navigate | V 追踪 → 图标伺服 → 距离 ≤3m 停止 |
+| 与…对话 / 交谈 | talk | 导航到 NPC 图标 → F → 交给 AutoSkip |
+| 跟随… | follow | 低速跟随图标，保持 5~10m |
+| 击败 / 消灭 / 清理 | combat | 调 AutoFight，结束后等文案变化 |
+| 收集 / 获取 N 个 | collect | 导航 + AutoPick 循环 |
+| 调查 / 搜寻 / 查看 | interact | 导航 + F |
+| 无匹配 | unknown | 记录样本，可选交给 LLM，否则放弃 |
+
+关键规则：
+
+1. 采样 1Hz；文本归一化（去空白、数字统一为 `#`）后取指纹；连续 2 次相同才确认变化，避免动效抖动。
+2. 只做事件级判断，不进逐帧回路；v1 模型调用为 0，unknown 分支最多 1 次可选 LLM 调用。
+3. 优先级：`process.json` 命中 > QuestWatch；QuestWatch 仅在"未编排或出现新目标"时接管。
+4. 超时：单目标 180s 无变化 → 重读面板；连续 2 次失败 → 放弃该委托回到面板（第 ④ 层）。
+5. 对话结束判定看"交互提示消失 + 任务栏文本变化"，不用固定秒数。
+
+### 11.3 落地位置
+
+首选 AutoCommissionNova（已有面板、追踪、完成判定闭环）：
+
+```
+src/watchers/objective-watch.js       监听 + 指纹 + 变化事件
+src/recognition/objective-parser.js   关键词 → 目标类型
+src/navigation/objective-runner.js    追踪 + 伺服 + 到点交互
+```
+
+当前原型先落在本仓库 `js/quest-watch/`（`objective-watch.js` / `objective-parser.js` / `objective-runner.js` / `director.js` + `manifest.json`），验证通过后再移入 AutoCommissionNova。AutoStoryLoader 后续复用同一模块：在 `StepProcessorFactory` 注册 `追踪委托`，并在 `对话` 步骤后插入一次 watch 检查。
+
+不新增 C# 代码；不搬 `AutoTrackTask`，只借用其 ROI 与"任务面板传送"策略。
+
+### 11.4 里程碑与验收
+
+| 里程碑 | 内容 | 验收 |
+|---|---|---|
+| T1 监听可用 | 主界面连续运行 30 分钟 | 目标文本识别率 ≥95%，无误报抖动 |
+| T2 单目标闭环 | 手动接一条"前往"类委托 | 3/3 全自动到达并交互 |
+| T3 对话后接管 | 对话结束 → 新目标出现 | 5s 内识别并接管 ≥90%，无卡死 |
+| T4 整轮委托 | 面板 4 条 → 接取 → 执行 → 完成判定 → 领奖 | ≥2/4 端到端完成，卡死 ≤1 次 |
+| T5 反哺样本 | 运行日志落盘 | 每次运行产出可标注样本 ≥1 条 |
+
+指标：单委托耗时 ≤ 人工版本 1.5 倍；v1 模型调用 0；误判卡死率 ≤5%。
+
+### 11.5 与主计划的关系
+
+- T 轨道是第 ③ 层（通用导航）与第 ④ 层（兜底）的先行实现，不需要 P0 的模型结论即可开工。
+- P0 若证明语义泛化可行，把 `ObjectiveParser` 的 unknown 分支接到第 ② 层；否则维持关键词表。
+- T5 产出的日志与截图直接补入 P0 语料，样本采集与实现并行。
+
+### 11.6 风险
+
+| 风险 | 缓解 |
+|---|---|
+| 任务栏被 UI 遮挡或无距离显示 | 退回任务面板读取（J） |
+| OCR 抖动导致频繁切换 | 2 帧确认 + 变化阈值 + 最短驻留 3s |
+| 目标在图外不可见 | 走大地图传送；仍失败则放弃 |
+| 与既有 step 冲突 | 明确接管条件，step 优先 |
+
+启动语句：
+
+```
+按 Docs/design/commission-mechanism-generalization-plan.md 第 11 节 T 轨道执行，
+先实现 T1 监听与 T2 单目标闭环，只改脚本层，不改主程序。
+```

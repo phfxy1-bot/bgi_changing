@@ -1,0 +1,16 @@
+{
+  "manifest_version": 1,
+  "name": "任务变更监听（QuestWatch 原型）",
+  "version": "0.1.0",
+  "tags": [
+    "委托",
+    "任务",
+    "原型"
+  ],
+  "description": "监听追踪栏任务目标变化，并按目标类型执行追踪、导航与交互。T 轨道原型，尚未接入内容库与委托面板。",
+  "main": "main.js",
+  "library": [],
+  "saved_files": [
+    "Logs/quest-watch/"
+  ]
+}
