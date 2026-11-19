@@ -17,7 +17,10 @@ const PAIMON_TEMPLATE_PATH = "Data/RecognitionObject/paimon_menu.png";
  * 任务栏相对派蒙图标的偏移，来源于内置 AutoTrackTask：
  * ROI = (paimon.X, paimon.Y - 15 + 210, 300, 100)。
  */
-const MISSION_ROI_OFFSET = Object.freeze({ x: 0, y: 195, width: 300, height: 100 });
+const MISSION_ROI_OFFSET = Object.freeze({ x: 0, y: 190, width: 380, height: 130 });
+
+/** 裸数字（去掉单位的距离），如 "85"；允许的最大合理距离。 */
+const MAX_DISTANCE = 2000;
 
 /** 任务目标关键字，用于回退采样时剔除地图/对话中的无关文字。 */
 const OBJECTIVE_HINT = /前往|到达|移动至|回到|离开|进入|对话|交谈|询问|打听|击败|消灭|清除|讨伐|击退|打倒|收集|采集|拾取|获取|找到|调查|搜寻|查看|开启|触碰|阅读|使用|跟随|陪同|护送|交付|提交|完成/;
@@ -58,26 +61,19 @@ export async function readMissionOnce() {
 
     const cap = captureGameRegion();
     try {
-        let roi = { ...MISSION_ROI_OFFSET };
+        // 追踪栏固定在屏幕左上（小地图下方），与派蒙图标匹配结果无关。
+        // 派蒙只用来判断“是否在主界面”，不再参与 ROI 计算：
+        // 实测模板命中率极低（30 分钟内 3471 次采样仅命中 262 次），
+        // 若用它定位 ROI 会长期读偏。
+        const roi = { ...MISSION_ROI_OFFSET };
+        result.roi = roi;
         const template = getTemplate(PAIMON_TEMPLATE_PATH);
         if (template) {
             const menu = cap.find(RecognitionObject.templateMatch(template, 0, 0, 640, 216));
-            if (menu.isEmpty()) {
-                // 主界面之外（对话/地图/加载）读不到任务栏，属预期。
-                // 但仍回退到固定 ROI 采样一次：模板或缩放不匹配时不至于完全失明，
-                // 结果用 inMainUi=false 标记，由下方关键字校验过滤噪声。
-                result.reason = "menu-missing";
-            } else {
-                result.inMainUi = true;
-                roi = {
-                    x: Math.round(menu.x + MISSION_ROI_OFFSET.x),
-                    y: Math.round(menu.y + MISSION_ROI_OFFSET.y),
-                    width: MISSION_ROI_OFFSET.width,
-                    height: MISSION_ROI_OFFSET.height,
-                };
-            }
+            result.inMainUi = !menu.isEmpty();
+            if (!result.inMainUi) result.reason = "menu-missing";
+            menu.dispose();
         }
-        result.roi = roi;
 
         const ocrRo = RecognitionObject.ocr(roi.x, roi.y, roi.width, roi.height);
         // findMulti 在 BGI 宿主里返回可等待的列表对象，必须 await，否则拿到的是 Promise。
@@ -89,9 +85,18 @@ export async function readMissionOnce() {
             if (!text) continue;
             if (isDistanceFragment(text)) {
                 result.distance = parseDistance(text);
-            } else {
-                parts.push(text);
+                continue;
             }
+            // OCR 常把 "85m" 的 m 丢掉，只剩裸数字；它属于距离，不应进入目标文本，
+            // 否则目标键会在 "...|85" 和 "..." 之间反复抖动。
+            if (/^\d{1,4}$/.test(text)) {
+                const value = Number(text);
+                if (result.distance === null && value <= MAX_DISTANCE) result.distance = value;
+                continue;
+            }
+            // 单字/双字残片（如 "冰" "）"），是截断噪声，丢弃。
+            if (text.length <= 2 && !OBJECTIVE_HINT.test(text)) continue;
+            parts.push(text);
         }
         result.text = parts.join("|");
         result.ok = result.text.length > 0;
@@ -180,10 +185,10 @@ export function createObjectiveWatch(options = {}) {
 
         const now = Date.now();
 
-        // 每 30 秒输出一次汇总，即使零事件也能看出采样是否在工作。
-        if (now - lastDiagLogAt >= 30000) {
+        // 每 10 秒输出一次汇总：采样约 2Hz，30 秒一次会显得“文本更新不及时”。
+        if (now - lastDiagLogAt >= 10000) {
             lastDiagLogAt = now;
-            log.info("采样统计 30s: 次数={samples} 主界面={inMainUi} 读到文字={textOk} 未识别主界面={menuMissing} OCR空={ocrEmpty} 回退采纳={fallback} 回退丢弃={fallbackRejected} 异常={exceptions} 当前文本={text}",
+            log.info("采样统计 10s: 次数={samples} 主界面={inMainUi} 读到文字={textOk} 未识别主界面={menuMissing} OCR空={ocrEmpty} 回退采纳={fallback} 回退丢弃={fallbackRejected} 异常={exceptions} 当前文本={text}",
                 stats.samples, stats.inMainUi, stats.textOk, stats.menuMissing, stats.ocrEmpty,
                 stats.fallback, stats.fallbackRejected, stats.exceptions, stats.lastText || "无");
         }

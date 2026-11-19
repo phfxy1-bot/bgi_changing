@@ -14,12 +14,14 @@
     "type": "select",
     "label": "运行时长（分钟）",
     "options": [
+      "3",
+      "5",
       "10",
       "30",
       "60",
       "120"
     ],
-    "default": "30"
+    "default": "10"
   },
   {
     "name": "max_failures",
