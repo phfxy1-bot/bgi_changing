@@ -123,24 +123,35 @@ export async function readMissionOnce() {
 }
 
 /**
- * 判断两条目标是否只是“任务标题行出现/消失”的差异。
- * 实测追踪栏上方偶尔会多识别出一行任务标题（如 “朔见光影交织|回到房间休息” / “回到房间休息”），
- * 若按不同目标处理会出现一次多余的“目标变化”。
- * 仅当长版本确实多出一整段（按 | 分段）时才视为同一目标，
+ * 判断两条目标是否只是“标题行 / 状态行出现或消失”的差异。
+ * 实测追踪栏会额外识别出两类附加行：
+ * - 前缀是任务标题，如 “朔见光影交织|回到房间休息” / “回到房间休息”
+ * - 后缀是状态行，如 “寻找接头人|已到达任务区域” / “寻找接头人”
+ * 它们会时有时无，若按不同目标处理会出现多余的“目标变化”。
+ * 仅当长版本确实多出一整段（按 | 分段）时才视为同一目标；
  * 单段目标内部多出几个字（“前往军械宫” / “前往军械宫寻找派蒙”）仍按真实变化处理。
  * @param {{raw: string, normalized: string}} a
  * @param {{raw: string, normalized: string}} b
  * @returns {boolean}
  */
-function isTitlePrefixVariant(a, b) {
+function isStatusOrTitleVariant(a, b) {
     if (!a || !b || !a.normalized || !b.normalized || a.normalized === b.normalized) return false;
     const [shorter, longer] = a.normalized.length <= b.normalized.length ? [a, b] : [b, a];
-    if (shorter.normalized.length < 4 || !longer.normalized.endsWith(shorter.normalized)) return false;
+    if (shorter.normalized.length < 4) return false;
+    // 纯状态文本（“已到达任务区域” / “位于其它地图层级”）太泛，不能作为合并依据，
+    // 否则会把它与任意 “X|已到达任务区域” 混为一谈。
+    if (/^(已到达|位于其它|任务完成|任务专注)/.test(shorter.raw.replace(/\|/g, "").trim())) return false;
+    const asPrefix = longer.normalized.startsWith(shorter.normalized);
+    const asSuffix = longer.normalized.endsWith(shorter.normalized);
+    if (!asPrefix && !asSuffix) return false;
     const shorterParts = shorter.raw.split("|").map(normalizeObjective).filter(Boolean);
     const longerParts = longer.raw.split("|").map(normalizeObjective).filter(Boolean);
     if (longerParts.length <= shorterParts.length) return false;
-    const tail = longerParts.slice(longerParts.length - shorterParts.length);
-    return tail.every((part, index) => part === shorterParts[index]);
+    // 短版本必须正好对应长版本的首段（状态行在后）或尾段（标题行在前）。
+    const related = asPrefix
+        ? longerParts.slice(0, shorterParts.length)
+        : longerParts.slice(longerParts.length - shorterParts.length);
+    return related.every((part, index) => part === shorterParts[index]);
 }
 
 /**
@@ -239,7 +250,7 @@ export function createObjectiveWatch(options = {}) {
         if (!objective.normalized) return;
 
         if (current && (objective.normalized === current.normalized
-                || isTitlePrefixVariant(objective, current))) {
+                || isStatusOrTitleVariant(objective, current))) {
             // 目标未变，仅刷新距离；若原始文字变了（如进度计数），单独通知订阅者。
             current.distance = objective.distance;
             pending = null;
@@ -253,7 +264,7 @@ export function createObjectiveWatch(options = {}) {
                     realVariant = stripPunctuation(sample.text) !== stripPunctuation(previousRaw);
                     current.raw = sample.text;
                 } else if (objective.normalized.length < previousNormalized.length) {
-                    // 任务标题行消失，保留较短的目标行作为规范写法。
+                    // 标题行/状态行消失，保留较短的目标行作为规范写法。
                     current.raw = sample.text;
                     current.normalized = objective.normalized;
                 }

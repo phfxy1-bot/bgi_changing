@@ -33,12 +33,12 @@ export const OBJECTIVE_TYPE = Object.freeze({
  */
 const RULES = [
     { type: OBJECTIVE_TYPE.ESCORT, patterns: [/护送/] },
-    { type: OBJECTIVE_TYPE.FOLLOW, patterns: [/跟随/, /陪同/] },
+    { type: OBJECTIVE_TYPE.FOLLOW, patterns: [/跟随/, /陪同/, /跟上/] },
     { type: OBJECTIVE_TYPE.COMBAT, patterns: [/击败/, /消灭/, /清除/, /讨伐/, /击退/, /打倒/] },
     { type: OBJECTIVE_TYPE.COLLECT, patterns: [/收集/, /采集/, /拾取/, /获取/, /找到/] },
-    { type: OBJECTIVE_TYPE.INTERACT, patterns: [/调查/, /搜寻/, /查看/, /开启/, /触碰/, /阅读/, /使用/] },
-    { type: OBJECTIVE_TYPE.TALK, patterns: [/对话/, /交谈/, /询问/, /打听/] },
-    { type: OBJECTIVE_TYPE.NAVIGATE, patterns: [/前往/, /到达/, /移动至/, /回到/, /离开/, /进入/] },
+    { type: OBJECTIVE_TYPE.INTERACT, patterns: [/调查/, /搜寻/, /查看/, /开启/, /触碰/, /阅读/, /使用/, /观察/, /召唤/] },
+    { type: OBJECTIVE_TYPE.TALK, patterns: [/对话/, /交谈/, /询问/, /打听/, /说明/, /联络/] },
+    { type: OBJECTIVE_TYPE.NAVIGATE, patterns: [/前往/, /到达/, /移动至/, /回到/, /离开/, /进入/, /寻找/, /找寻/] },
 ];
 
 /**
