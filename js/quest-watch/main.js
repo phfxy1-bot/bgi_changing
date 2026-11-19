@@ -78,8 +78,9 @@ import { runObjective } from "./objective-runner.js";
     await director.stop();
     const stats = watch.getStats ? watch.getStats() : null;
     if (stats) {
-        log.info("采样统计 汇总: 次数={samples} 主界面={inMainUi} 读到文字={textOk} 未识别主界面={menuMissing} OCR空={ocrEmpty} 异常={exceptions}",
-            stats.samples, stats.inMainUi, stats.textOk, stats.menuMissing, stats.ocrEmpty, stats.exceptions);
+        log.info("采样统计 汇总: 次数={samples} 主界面={inMainUi} 读到文字={textOk} 未识别主界面={menuMissing} OCR空={ocrEmpty} 回退采纳={fallback} 回退丢弃={fallbackRejected} 异常={exceptions}",
+            stats.samples, stats.inMainUi, stats.textOk, stats.menuMissing, stats.ocrEmpty,
+            stats.fallback, stats.fallbackRejected, stats.exceptions);
     }
     log.info("QuestWatch 结束，已输出样本日志: Logs/quest-watch/objectives.log");
 })();

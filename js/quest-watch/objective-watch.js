@@ -19,6 +19,9 @@ const PAIMON_TEMPLATE_PATH = "Data/RecognitionObject/paimon_menu.png";
  */
 const MISSION_ROI_OFFSET = Object.freeze({ x: 0, y: 195, width: 300, height: 100 });
 
+/** 任务目标关键字，用于回退采样时剔除地图/对话中的无关文字。 */
+const OBJECTIVE_HINT = /前往|到达|移动至|回到|离开|进入|对话|交谈|询问|打听|击败|消灭|清除|讨伐|击退|打倒|收集|采集|拾取|获取|找到|调查|搜寻|查看|开启|触碰|阅读|使用|跟随|陪同|护送|交付|提交|完成/;
+
 /** 模板缓存，避免每轮都读取图片造成句柄泄漏。 */
 const templateCache = new Map();
 
@@ -60,17 +63,19 @@ export async function readMissionOnce() {
         if (template) {
             const menu = cap.find(RecognitionObject.templateMatch(template, 0, 0, 640, 216));
             if (menu.isEmpty()) {
-                // 主界面之外（对话/地图/加载）读不到任务栏，属预期；但必须留痕，否则无法区分“没在跑”和“一直在跳过”。
+                // 主界面之外（对话/地图/加载）读不到任务栏，属预期。
+                // 但仍回退到固定 ROI 采样一次：模板或缩放不匹配时不至于完全失明，
+                // 结果用 inMainUi=false 标记，由下方关键字校验过滤噪声。
                 result.reason = "menu-missing";
-                return result;
+            } else {
+                result.inMainUi = true;
+                roi = {
+                    x: Math.round(menu.x + MISSION_ROI_OFFSET.x),
+                    y: Math.round(menu.y + MISSION_ROI_OFFSET.y),
+                    width: MISSION_ROI_OFFSET.width,
+                    height: MISSION_ROI_OFFSET.height,
+                };
             }
-            result.inMainUi = true;
-            roi = {
-                x: Math.round(menu.x + MISSION_ROI_OFFSET.x),
-                y: Math.round(menu.y + MISSION_ROI_OFFSET.y),
-                width: MISSION_ROI_OFFSET.width,
-                height: MISSION_ROI_OFFSET.height,
-            };
         }
         result.roi = roi;
 
@@ -91,6 +96,17 @@ export async function readMissionOnce() {
         result.text = parts.join("|");
         result.ok = result.text.length > 0;
         result.reason = result.ok ? "ok" : "ocr-empty";
+
+        // 回退采样（未识别主界面）时，用任务目标关键字过滤地图/对话里的噪声文本。
+        if (result.ok && !result.inMainUi) {
+            if (!OBJECTIVE_HINT.test(result.text) && result.distance === null) {
+                result.ok = false;
+                result.text = "";
+                result.reason = "fallback-rejected";
+            } else {
+                result.reason = "fallback";
+            }
+        }
     } catch (error) {
         result.reason = "exception";
         log.warn("任务栏 OCR 异常: {error}", error.message || error);
@@ -144,7 +160,7 @@ export function createObjectiveWatch(options = {}) {
      * 目的：把“脚本没跑”“一直在跳过采样”“OCR 读空”三种沉默区分开，
      * 否则主日志里除了启动/结束什么都没有，无法定位问题。
      */
-    const stats = { samples: 0, inMainUi: 0, textOk: 0, menuMissing: 0, ocrEmpty: 0, exceptions: 0 };
+    const stats = { samples: 0, inMainUi: 0, textOk: 0, menuMissing: 0, ocrEmpty: 0, exceptions: 0, fallback: 0, fallbackRejected: 0, lastText: "" };
     let lastDiagLogAt = 0;
     let lastMissWarnAt = 0;
     let lastEmptyWarnAt = 0;
@@ -157,21 +173,25 @@ export function createObjectiveWatch(options = {}) {
         if (sample.reason === "menu-missing") stats.menuMissing++;
         if (sample.reason === "ocr-empty") stats.ocrEmpty++;
         if (sample.reason === "exception") stats.exceptions++;
+        if (sample.reason === "fallback") stats.fallback++;
+        if (sample.reason === "fallback-rejected") stats.fallbackRejected++;
         if (sample.roi) lastRoi = sample.roi;
+        if (sample.ok) stats.lastText = sample.text.length > 60 ? sample.text.slice(0, 60) + "..." : sample.text;
 
         const now = Date.now();
 
         // 每 30 秒输出一次汇总，即使零事件也能看出采样是否在工作。
         if (now - lastDiagLogAt >= 30000) {
             lastDiagLogAt = now;
-            log.info("采样统计 30s: 次数={samples} 主界面={inMainUi} 读到文字={textOk} 未识别主界面={menuMissing} OCR空={ocrEmpty} 异常={exceptions}",
-                stats.samples, stats.inMainUi, stats.textOk, stats.menuMissing, stats.ocrEmpty, stats.exceptions);
+            log.info("采样统计 30s: 次数={samples} 主界面={inMainUi} 读到文字={textOk} 未识别主界面={menuMissing} OCR空={ocrEmpty} 回退采纳={fallback} 回退丢弃={fallbackRejected} 异常={exceptions} 当前文本={text}",
+                stats.samples, stats.inMainUi, stats.textOk, stats.menuMissing, stats.ocrEmpty,
+                stats.fallback, stats.fallbackRejected, stats.exceptions, stats.lastText || "无");
         }
 
         // 连续未识别主界面：多半是分辨率/缩放与模板不匹配，或一直停在对话/地图。
         if (sample.reason === "menu-missing" && now - lastMissWarnAt >= 30000) {
             lastMissWarnAt = now;
-            log.warn("未识别到主界面（派蒙图标未匹配），已跳过采样；若持续出现请检查游戏分辨率与 Data/RecognitionObject/paimon_menu.png");
+            log.warn("未识别到主界面（派蒙图标未匹配），已用固定 ROI 回退采样；若长期出现请检查游戏分辨率与 Data/RecognitionObject/paimon_menu.png");
         }
 
         // 主界面已确认但读不到任务栏文字：ROI 偏移或该目标栏为空。
