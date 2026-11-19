@@ -42,6 +42,20 @@ const RULES = [
 ];
 
 /**
+ * 去掉空白与标点，保留数字。
+ * 用于判断两条文本是否只是 OCR 标点抖动（如「」/」/】、逗号、分段竖线）。
+ * @param {string} text 原始文本
+ * @returns {string} 去标点后的文本
+ */
+export function stripPunctuation(text) {
+    if (!text) return "";
+    return String(text)
+        .replace(/[\s\u3000]/g, "")
+        .replace(/[^\u4e00-\u9fa5a-zA-Z0-9+#]/g, "")
+        .trim();
+}
+
+/**
  * 归一化目标文本：去掉空白与标点，把连续数字折叠为 #。
  * 这样“收集 3 个苹果”和“收集 5 个苹果”会得到同一个指纹，避免数字变化引起误报。
  * @param {string} text 原始文本
@@ -49,11 +63,7 @@ const RULES = [
  */
 export function normalizeObjective(text) {
     if (!text) return "";
-    return String(text)
-        .replace(/[\s\u3000]/g, "")
-        .replace(/[^\u4e00-\u9fa5a-zA-Z0-9+#]/g, "")
-        .replace(/\d+/g, "#")
-        .trim();
+    return stripPunctuation(text).replace(/\d+/g, "#");
 }
 
 /**

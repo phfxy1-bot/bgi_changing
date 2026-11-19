@@ -8,7 +8,7 @@
  * 坐标系固定为 setGameMetrics 后的 1920×1080 逻辑坐标。
  */
 
-import { isDistanceFragment, normalizeObjective, parseDistance, parseObjective } from "./objective-parser.js";
+import { isDistanceFragment, normalizeObjective, parseDistance, parseObjective, stripPunctuation } from "./objective-parser.js";
 
 /** 小地图上方派蒙头像模板，用于确认是否在主界面并据此定位任务栏。 */
 const PAIMON_TEMPLATE_PATH = "Data/RecognitionObject/paimon_menu.png";
@@ -123,6 +123,27 @@ export async function readMissionOnce() {
 }
 
 /**
+ * 判断两条目标是否只是“任务标题行出现/消失”的差异。
+ * 实测追踪栏上方偶尔会多识别出一行任务标题（如 “朔见光影交织|回到房间休息” / “回到房间休息”），
+ * 若按不同目标处理会出现一次多余的“目标变化”。
+ * 仅当长版本确实多出一整段（按 | 分段）时才视为同一目标，
+ * 单段目标内部多出几个字（“前往军械宫” / “前往军械宫寻找派蒙”）仍按真实变化处理。
+ * @param {{raw: string, normalized: string}} a
+ * @param {{raw: string, normalized: string}} b
+ * @returns {boolean}
+ */
+function isTitlePrefixVariant(a, b) {
+    if (!a || !b || !a.normalized || !b.normalized || a.normalized === b.normalized) return false;
+    const [shorter, longer] = a.normalized.length <= b.normalized.length ? [a, b] : [b, a];
+    if (shorter.normalized.length < 4 || !longer.normalized.endsWith(shorter.normalized)) return false;
+    const shorterParts = shorter.raw.split("|").map(normalizeObjective).filter(Boolean);
+    const longerParts = longer.raw.split("|").map(normalizeObjective).filter(Boolean);
+    if (longerParts.length <= shorterParts.length) return false;
+    const tail = longerParts.slice(longerParts.length - shorterParts.length);
+    return tail.every((part, index) => part === shorterParts[index]);
+}
+
+/**
  * 创建任务变更监听器。
  * @param {object} [options]
  * @param {number} [options.pollInterval=1000] 采样间隔（毫秒）
@@ -167,7 +188,6 @@ export function createObjectiveWatch(options = {}) {
      */
     const stats = { samples: 0, inMainUi: 0, textOk: 0, menuMissing: 0, ocrEmpty: 0, exceptions: 0, fallback: 0, fallbackRejected: 0, lastText: "" };
     let lastDiagLogAt = 0;
-    let lastMissWarnAt = 0;
     let lastEmptyWarnAt = 0;
     let lastRoi = null;
 
@@ -175,7 +195,8 @@ export function createObjectiveWatch(options = {}) {
         stats.samples++;
         if (sample.inMainUi) stats.inMainUi++;
         if (sample.ok) stats.textOk++;
-        if (sample.reason === "menu-missing") stats.menuMissing++;
+        // reason 在读取阶段会被 ok/ocr-empty 覆盖，不能靠它统计主界面未识别。
+        if (!sample.inMainUi) stats.menuMissing++;
         if (sample.reason === "ocr-empty") stats.ocrEmpty++;
         if (sample.reason === "exception") stats.exceptions++;
         if (sample.reason === "fallback") stats.fallback++;
@@ -193,14 +214,8 @@ export function createObjectiveWatch(options = {}) {
                 stats.fallback, stats.fallbackRejected, stats.exceptions, stats.lastText || "无");
         }
 
-        // 连续未识别主界面：多半是分辨率/缩放与模板不匹配，或一直停在对话/地图。
-        if (sample.reason === "menu-missing" && now - lastMissWarnAt >= 30000) {
-            lastMissWarnAt = now;
-            log.warn("未识别到主界面（派蒙图标未匹配），已用固定 ROI 回退采样；若长期出现请检查游戏分辨率与 Data/RecognitionObject/paimon_menu.png");
-        }
-
         // 主界面已确认但读不到任务栏文字：ROI 偏移或该目标栏为空。
-        if (sample.reason === "ocr-empty" && now - lastEmptyWarnAt >= 30000) {
+        if (sample.inMainUi && sample.reason === "ocr-empty" && now - lastEmptyWarnAt >= 30000) {
             lastEmptyWarnAt = now;
             const roi = lastRoi || MISSION_ROI_OFFSET;
             log.warn("主界面已识别但任务栏 OCR 为空，ROI=({x},{y},{w},{h})",
@@ -223,17 +238,29 @@ export function createObjectiveWatch(options = {}) {
         const objective = parseObjective(sample.text, sample.distance);
         if (!objective.normalized) return;
 
-        if (current && objective.normalized === current.normalized) {
+        if (current && (objective.normalized === current.normalized
+                || isTitlePrefixVariant(objective, current))) {
             // 目标未变，仅刷新距离；若原始文字变了（如进度计数），单独通知订阅者。
             current.distance = objective.distance;
             pending = null;
             pendingCount = 0;
             if (sample.text !== current.raw) {
-                const variant = { ...objective, variant: true, previousRaw: current.raw };
-                current.raw = sample.text;
+                const previousRaw = current.raw;
+                const previousNormalized = current.normalized;
+                let realVariant = false;
+                if (objective.normalized === previousNormalized) {
+                    // 归一化相同：数字变化（进度）算变体；只有标点抖动（「」/」/】、分段竖线）则静默。
+                    realVariant = stripPunctuation(sample.text) !== stripPunctuation(previousRaw);
+                    current.raw = sample.text;
+                } else if (objective.normalized.length < previousNormalized.length) {
+                    // 任务标题行消失，保留较短的目标行作为规范写法。
+                    current.raw = sample.text;
+                    current.normalized = objective.normalized;
+                }
                 const now = Date.now();
-                if (now - lastVariantAt >= minVariantMs) {
+                if (realVariant && now - lastVariantAt >= minVariantMs) {
                     lastVariantAt = now;
+                    const variant = { ...objective, variant: true, previousRaw };
                     log.info("目标内文字变化: [{from}] -> [{to}]", variant.previousRaw, variant.raw);
                     for (const listener of variantListeners) {
                         try {

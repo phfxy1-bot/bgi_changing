@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "name": "任务变更监听（QuestWatch 原型）",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "tags": [
     "委托",
     "任务",
