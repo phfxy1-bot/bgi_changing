@@ -14,7 +14,7 @@ import { createDirector } from "./director.js";
 import { runObjective } from "./objective-runner.js";
 
 (async function () {
-    setGameMetrics(1920, 1080, genshin.ScreenDpiScale);
+    setGameMetrics(1920, 1080, genshin.screenDpiScale);
 
     const config = typeof settings !== "undefined" && settings ? settings : {};
     const mode = config.mode === "run" ? "run" : "listen";

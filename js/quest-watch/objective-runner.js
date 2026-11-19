@@ -74,7 +74,13 @@ let lastObjectiveKey = null;
 function getTemplate(path) {
     if (templateCache.has(path)) return templateCache.get(path);
     try {
-        const template = file.ReadImageMatSync(path);
+        const template = file.readImageMatSync(path);
+        // 文件缺失时宿主返回空 Mat，直接参与匹配会报 !_src.empty()，这里显式判空。
+        if (!template || !(template.Width > 0)) {
+            log.warn("模板为空，相关识别已跳过: {path}", path);
+            templateCache.set(path, null);
+            return null;
+        }
         templateCache.set(path, template);
         return template;
     } catch (error) {
@@ -122,7 +128,7 @@ function fitTemplate(mat, capWidth) {
     if (!capWidth || Math.abs(capWidth - 1920) < 4) return mat;
     try {
         const ratio = capWidth / 1920;
-        const size = new OpenCvSharp.Size(Math.round(mat.Width * ratio), Math.round(mat.Height * ratio));
+        const size = new OpenCvSharp.OpenCvSharp.Size(Math.round(mat.Width * ratio), Math.round(mat.Height * ratio));
         return mat.Resize(size);
     } catch {
         return mat;
@@ -136,7 +142,7 @@ function fitTemplate(mat, capWidth) {
 function defaultTaskIcon() {
     const template = getTemplate(ICON_TEMPLATE_PATH);
     if (!template) return null;
-    return RecognitionObject.TemplateMatch(template, 0, 0, 1920, 1080);
+    return RecognitionObject.templateMatch(template, 0, 0, 1920, 1080);
 }
 
 /**
@@ -148,7 +154,7 @@ function isTalkUi(cap) {
     const template = getTemplate(TALK_ICON_PATH);
     if (!template) return false;
     try {
-        const res = cap.find(RecognitionObject.TemplateMatch(
+        const res = cap.find(RecognitionObject.templateMatch(
             template, TALK_ICON_ROI.x, TALK_ICON_ROI.y, TALK_ICON_ROI.width, TALK_ICON_ROI.height
         ));
         return !res.isEmpty();
@@ -169,7 +175,7 @@ function readDistanceUnderIcon(cap, icon) {
     try {
         const x = Math.max(0, Math.round(icon.x - 55));
         const y = Math.max(0, Math.round(icon.y + 32));
-        area = cap.DeriveCrop(x, y, 130, 45);
+        area = cap.deriveCrop(x, y, 130, 45);
         const res = area.find(RecognitionObject.ocrThis);
         const text = (res.text || "").replace(/[oO]/g, "0");
         const match = text.match(/(\d+)\s*(m|米)/i);
@@ -191,7 +197,7 @@ async function readTalkOptions(target) {
     let area = null;
     try {
         cap = captureGameRegion();
-        area = cap.DeriveCrop(DIALOG_OPTIONS_ROI.x, DIALOG_OPTIONS_ROI.y,
+        area = cap.deriveCrop(DIALOG_OPTIONS_ROI.x, DIALOG_OPTIONS_ROI.y,
             DIALOG_OPTIONS_ROI.width, DIALOG_OPTIONS_ROI.height);
         const res = await area.findMulti(RecognitionObject.ocrThis);
         const count = listCount(res);
@@ -261,7 +267,7 @@ async function waitBigMapOpen(timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         try {
-            const position = genshin.GetPositionFromBigMap();
+            const position = genshin.getPositionFromBigMap();
             if (position) return true;
         } catch {
             // 地图未打开时宿主会抛异常，继续等待。
@@ -280,7 +286,7 @@ async function waitBigMapClosed(timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         try {
-            const position = genshin.GetPositionFromBigMap();
+            const position = genshin.getPositionFromBigMap();
             if (!position) return true;
         } catch {
             return true;
@@ -333,13 +339,11 @@ async function findWaypointsOnMap() {
             if (!template) continue;
             let ro = null;
             try {
-                ro = RecognitionObject.TemplateMatch(fitTemplate(template, capWidth),
+                ro = RecognitionObject.templateMatch(fitTemplate(template, capWidth),
                     MAP_ICON_ROI.x, MAP_ICON_ROI.y, MAP_ICON_ROI.width, MAP_ICON_ROI.height);
                 try {
-                    ro.Threshold = spec.threshold;
-                } catch {
-                    try { ro.threshold = spec.threshold; } catch { /* 阈值不可写时用默认值 */ }
-                }
+                    ro.threshold = spec.threshold;
+                } catch { /* 阈值不可写时用默认值 */ }
                 const res = await cap.findMulti(ro);
                 const count = listCount(res);
                 for (let i = 0; i < count; i++) {
@@ -431,6 +435,7 @@ export async function teleportToQuest(options = {}) {
     }
 
     await closeMap();
+    log.warn("传送未生效：请确认 BGI 设置中已开启「快速传送」，否则点击传送点只会弹出列表");
     return { ok: false, reason: "teleport-click-failed" };
 }
 

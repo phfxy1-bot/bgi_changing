@@ -30,7 +30,7 @@ const templateCache = new Map();
 function getTemplate(path) {
     if (templateCache.has(path)) return templateCache.get(path);
     try {
-        const template = file.ReadImageMatSync(path);
+        const template = file.readImageMatSync(path);
         // 文件不存在时 BGI 返回空 Mat 而不抛异常，必须显式判空，否则后续匹配会报 !_src.empty()。
         if (!template || !(template.Width > 0)) {
             log.warn("模板为空，跳过该判断: {path}", path);
@@ -58,7 +58,7 @@ export async function readMissionOnce() {
         let roi = { ...MISSION_ROI_OFFSET };
         const template = getTemplate(PAIMON_TEMPLATE_PATH);
         if (template) {
-            const menu = cap.Find(RecognitionObject.TemplateMatch(template, 0, 0, 640, 216));
+            const menu = cap.find(RecognitionObject.templateMatch(template, 0, 0, 640, 216));
             if (menu.isEmpty()) {
                 return result;
             }
@@ -71,7 +71,7 @@ export async function readMissionOnce() {
             };
         }
 
-        const ocrRo = RecognitionObject.Ocr(roi.x, roi.y, roi.width, roi.height);
+        const ocrRo = RecognitionObject.ocr(roi.x, roi.y, roi.width, roi.height);
         // findMulti 在 BGI 宿主里返回可等待的列表对象，必须 await，否则拿到的是 Promise。
         const texts = await cap.findMulti(ocrRo);
         const count = texts && texts.count !== undefined ? texts.count : (texts ? texts.length : 0);

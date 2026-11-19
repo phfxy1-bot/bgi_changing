@@ -29,7 +29,7 @@ function appendSample(objective, outcome) {
             target: objective.target,
             distance: objective.distance,
         });
-        file.WriteTextSync(SAMPLE_LOG_PATH, line + "\n", true);
+        file.writeTextSync(SAMPLE_LOG_PATH, line + "\n", true);
     } catch (error) {
         log.warn("写入目标样本失败: {error}", error.message || error);
     }
