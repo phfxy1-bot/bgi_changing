@@ -106,12 +106,15 @@ export async function readMissionOnce() {
  */
 export function createObjectiveWatch(options = {}) {
     const {
-        pollInterval = 1000,
+        // 追踪栏文字在对话推进时变化很快，1Hz 容易漏掉短暂目标。
+        pollInterval = 500,
         confirmFrames = 2,
-        minDwellMs = 2000,
+        minDwellMs = 1000,
     } = options;
 
     const listeners = [];
+    /** 仅用于“同一目标内文字细节变化”（如进度 0/3 -> 1/3）的订阅者 */
+    const variantListeners = [];
     /** 轮询代次，stop 后令旧循环自然退出（V8 运行时没有 setInterval）。 */
     let loopToken = 0;
     let running = false;
@@ -128,6 +131,8 @@ export function createObjectiveWatch(options = {}) {
     let pending = null;
     let pendingCount = 0;
     let lastEmitAt = 0;
+    let lastVariantAt = 0;
+    const minVariantMs = options.minVariantMs || 1000;
 
     /**
      * 处理一次采样结果。
@@ -145,10 +150,26 @@ export function createObjectiveWatch(options = {}) {
         if (!objective.normalized) return;
 
         if (current && objective.normalized === current.normalized) {
-            // 文本未变，仅刷新距离，不视为变化。
+            // 目标未变，仅刷新距离；若原始文字变了（如进度计数），单独通知订阅者。
             current.distance = objective.distance;
             pending = null;
             pendingCount = 0;
+            if (sample.text !== current.raw) {
+                const variant = { ...objective, variant: true, previousRaw: current.raw };
+                current.raw = sample.text;
+                const now = Date.now();
+                if (now - lastVariantAt >= minVariantMs) {
+                    lastVariantAt = now;
+                    log.info("目标内文字变化: [{from}] -> [{to}]", variant.previousRaw, variant.raw);
+                    for (const listener of variantListeners) {
+                        try {
+                            listener(variant, current);
+                        } catch (error) {
+                            log.error("目标内文字回调异常: {error}", error.message || error);
+                        }
+                    }
+                }
+            }
             return;
         }
 
@@ -198,6 +219,10 @@ export function createObjectiveWatch(options = {}) {
         /** 订阅目标变化。 */
         onChange(listener) {
             listeners.push(listener);
+        },
+        /** 订阅“目标未变但文字细节变了”（进度、计数等）。 */
+        onVariant(listener) {
+            variantListeners.push(listener);
         },
         /** 启动轮询。 */
         start() {

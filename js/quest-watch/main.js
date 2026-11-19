@@ -42,11 +42,8 @@ import { runObjective } from "./objective-runner.js";
         return { ok: true, reason: "combat-done", talk: false };
     }
 
-    const watch = createObjectiveWatch({
-        pollInterval: config.poll_interval_ms || 1000,
-        confirmFrames: config.confirm_frames || 2,
-        minDwellMs: config.min_dwell_ms || 2000,
-    });
+    // 采样节奏由监听器内部的默认值决定：500ms 轮询 + 2 帧确认 + 1s 最小间隔。
+    const watch = createObjectiveWatch();
 
     const director = createDirector({
         watch,

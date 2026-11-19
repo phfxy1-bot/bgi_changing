@@ -28,6 +28,7 @@ function appendSample(objective, outcome) {
             type: objective.type,
             target: objective.target,
             distance: objective.distance,
+            previousRaw: objective.previousRaw || null,
         });
         file.writeTextSync(SAMPLE_LOG_PATH, line + "\n", true);
     } catch (error) {
@@ -140,6 +141,11 @@ export function createDirector(deps) {
         inFlight = handle(objective, previous).finally(() => {
             inFlight = null;
         });
+    });
+
+    // 目标文字细节变化（进度计数等）只落样本，永远不触发执行。
+    watch.onVariant((objective) => {
+        appendSample(objective, "observed-variant");
     });
 
     return {
