@@ -115,6 +115,12 @@ export function createObjectiveWatch(options = {}) {
     /** 轮询代次，stop 后令旧循环自然退出（V8 运行时没有 setInterval）。 */
     let loopToken = 0;
     let running = false;
+    /**
+     * 正在进行的采样 Promise。
+     * 脚本结束时若仍有采样在途，V8 引擎销毁后访问宿主对象会抛 ObjectDisposedException，
+     * 因此 stop 必须等待它在途完成再返回。
+     */
+    let inFlight = null;
 
     /** 当前已确认的目标 */
     let current = null;
@@ -128,6 +134,8 @@ export function createObjectiveWatch(options = {}) {
      * @param {{ok: boolean, text: string, distance: number|null}} sample
      */
     function consume(sample) {
+        // 已停止后不再回调与写日志，避免脚本销毁后再访问宿主对象。
+        if (!running) return;
         if (!sample.ok) {
             // 对话/菜单/加载中读不到任务栏，保持当前状态等待恢复。
             return;
@@ -198,26 +206,42 @@ export function createObjectiveWatch(options = {}) {
             const token = ++loopToken;
             // BGI 的 V8 宿主没有 setInterval，用 sleep 驱动的异步循环替代。
             (async () => {
+                inFlight = poll();
                 try {
-                    await poll();
+                    await inFlight;
                 } catch (error) {
-                    log.error("任务栏首次采样异常: {error}", error.message || error);
+                    if (running) log.error("任务栏首次采样异常: {error}", error.message || error);
+                } finally {
+                    inFlight = null;
                 }
                 while (running && token === loopToken) {
                     await sleep(pollInterval);
                     if (!running || token !== loopToken) break;
+                    inFlight = poll();
                     try {
-                        await poll();
+                        await inFlight;
                     } catch (error) {
-                        log.error("任务栏轮询异常: {error}", error.message || error);
+                        if (running) log.error("任务栏轮询异常: {error}", error.message || error);
+                    } finally {
+                        inFlight = null;
                     }
                 }
             })();
         },
-        /** 停止轮询。 */
-        stop() {
+        /**
+         * 停止轮询。
+         * 等待在途采样结束，确保脚本返回前不再访问宿主对象。
+         */
+        async stop() {
             running = false;
             loopToken++;
+            if (inFlight) {
+                try {
+                    await inFlight;
+                } catch (error) {
+                    // 停止阶段的异常无需上报，调用方只关心是否已静默。
+                }
+            }
         },
         /** 当前目标（可能为 null）。 */
         getCurrent() {

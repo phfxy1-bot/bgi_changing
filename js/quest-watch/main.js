@@ -65,6 +65,8 @@ import { runObjective } from "./objective-runner.js";
         await sleep(1000);
     }
 
-    director.stop();
+    // 必须等待停止完成：残留的在途采样会在 V8 引擎销毁后访问宿主对象，
+    // 触发 ObjectDisposedException（日志里的“非致命异常”即由此而来）。
+    await director.stop();
     log.info("QuestWatch 结束，已输出样本日志: Logs/quest-watch/objectives.log");
 })();

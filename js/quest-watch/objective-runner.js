@@ -536,11 +536,13 @@ async function advanceDialogue(target, timeoutMs = 90000) {
  * @param {number} timeoutMs 超时
  * @returns {Promise<{ok: boolean, reason: string}>}
  */
-async function waitDialogueEnd(timeoutMs = 120000) {
+async function waitDialogueEnd(timeoutMs = 120000, shouldStop = null) {
     const deadline = Date.now() + timeoutMs;
     let absent = 0;
 
     while (Date.now() < deadline) {
+        // 脚本停止时立即返回，避免销毁后再访问宿主对象。
+        if (shouldStop && shouldStop()) return { ok: false, reason: "cancelled" };
         let cap = null;
         let talking = false;
         try {
@@ -578,6 +580,7 @@ export async function navigateToIcon(iconRo, options = {}) {
         arriveDistance = 3,
         follow = false,
         requireTalk = false,
+        shouldStop = null,
     } = options;
 
     keyPress("v");
@@ -591,6 +594,10 @@ export async function navigateToIcon(iconRo, options = {}) {
     let lastProgressAt = Date.now();
 
     while (Date.now() - startedAt < timeoutMs) {
+        if (shouldStop && shouldStop()) {
+            keyUp("w");
+            return { ok: false, reason: "cancelled", talk: false };
+        }
         let cap = null;
         try {
             cap = captureGameRegion();
@@ -703,10 +710,11 @@ export async function runObjective(objective, options = {}) {
 
     const interactKey = options.interactKey || "f";
     const allowTeleport = options.allowTeleport !== false;
+    const shouldStop = typeof options.shouldStop === "function" ? options.shouldStop : null;
     // 对话默认交给 BGI 内置「自动剧情」推进，本脚本只等待其结束，避免双方抢点击。
     const delegateDialogue = options.delegateDialogue !== false;
     const runDialog = (target) => (delegateDialogue
-        ? waitDialogueEnd(options.dialogTimeoutMs)
+        ? waitDialogueEnd(options.dialogTimeoutMs, shouldStop)
         : advanceDialogue(target, options.dialogTimeoutMs));
 
     switch (objective.type) {
@@ -719,6 +727,7 @@ export async function runObjective(objective, options = {}) {
                 requireTalk: true,
                 follow: false,
                 timeoutMs: options.timeoutMs,
+                shouldStop,
             });
             if (!nav.ok) return nav;
             const dialog = await runDialog(objective.target);
@@ -732,6 +741,7 @@ export async function runObjective(objective, options = {}) {
                 follow: true,
                 requireTalk: true,
                 timeoutMs: options.followTimeoutMs || 300000,
+                shouldStop,
             });
         }
 
@@ -749,7 +759,7 @@ export async function runObjective(objective, options = {}) {
                 const reach = await ensureReachable();
                 if (!reach.ok) return { ok: false, reason: reach.reason, talk: false };
             }
-            const nav = await navigateToIcon(iconRo, { timeoutMs: options.timeoutMs });
+            const nav = await navigateToIcon(iconRo, { timeoutMs: options.timeoutMs, shouldStop });
             if (!nav.ok) return nav;
             const interaction = await interactAtTarget(interactKey);
             if (interaction.talk) {

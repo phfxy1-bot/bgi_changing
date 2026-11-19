@@ -60,6 +60,8 @@ export function createDirector(deps) {
     const failures = new Map();
     let busy = false;
     let running = true;
+    /** 正在执行的目标处理 Promise，停止时需要等待它退出。 */
+    let inFlight = null;
 
     /**
      * 处理一次目标变化事件。
@@ -90,7 +92,11 @@ export function createDirector(deps) {
         busy = true;
         try {
             log.info("QuestWatch 接管: {raw}", objective.raw);
-            const result = await runner.runObjective(objective, runOptions);
+            // shouldStop 让长耗时步骤（导航、等对话）在脚本停止时尽快退出。
+            const result = await runner.runObjective(objective, {
+                ...runOptions,
+                shouldStop: () => !running,
+            });
             const count = (failures.get(objective.normalized) || 0) + 1;
 
             if (result.ok) {
@@ -123,7 +129,9 @@ export function createDirector(deps) {
 
     watch.onChange((objective, previous) => {
         // 事件回调不等待：执行在后台完成，期间新事件按 busy 规则丢弃。
-        handle(objective, previous);
+        inFlight = handle(objective, previous).finally(() => {
+            inFlight = null;
+        });
     });
 
     return {
@@ -132,10 +140,20 @@ export function createDirector(deps) {
             running = true;
             watch.start();
         },
-        /** 停止接管并释放轮询。 */
-        stop() {
+        /**
+         * 停止接管并释放轮询。
+         * 顺序：先停监听，再等当前目标处理退出，最后才允许脚本返回。
+         */
+        async stop() {
             running = false;
-            watch.stop();
+            await watch.stop();
+            if (inFlight) {
+                try {
+                    await inFlight;
+                } catch (error) {
+                    // 停止阶段的异常无需上报。
+                }
+            }
         },
         /** 是否有目标正在执行。 */
         isBusy() {
