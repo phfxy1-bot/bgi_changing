@@ -19,12 +19,6 @@ const PAIMON_TEMPLATE_PATH = "Data/RecognitionObject/paimon_menu.png";
  */
 const MISSION_ROI_OFFSET = Object.freeze({ x: 0, y: 195, width: 300, height: 100 });
 
-/**
- * 主界面右下角的“停止追踪”按钮区域，用于判断当前是否有追踪目标。
- * 来源于 AutoCommissionNova 的 COMMISSION_TRACKING 常量。
- */
-const STOP_TRACKING_REGION = Object.freeze({ x: 1626, y: 987, width: 127, height: 40 });
-
 /** 模板缓存，避免每轮都读取图片造成句柄泄漏。 */
 const templateCache = new Map();
 
@@ -37,6 +31,12 @@ function getTemplate(path) {
     if (templateCache.has(path)) return templateCache.get(path);
     try {
         const template = file.ReadImageMatSync(path);
+        // 文件不存在时 BGI 返回空 Mat 而不抛异常，必须显式判空，否则后续匹配会报 !_src.empty()。
+        if (!template || !(template.Width > 0)) {
+            log.warn("模板为空，跳过该判断: {path}", path);
+            templateCache.set(path, null);
+            return null;
+        }
         templateCache.set(path, template);
         return template;
     } catch (error) {
@@ -48,10 +48,10 @@ function getTemplate(path) {
 
 /**
  * 读取一次追踪栏文本。
- * @returns {{ok: boolean, text: string, distance: number|null, inMainUi: boolean, hasTracking: boolean}}
+ * @returns {Promise<{ok: boolean, text: string, distance: number|null, inMainUi: boolean}>}
  */
-export function readMissionOnce() {
-    const result = { ok: false, text: "", distance: null, inMainUi: false, hasTracking: false };
+export async function readMissionOnce() {
+    const result = { ok: false, text: "", distance: null, inMainUi: false };
 
     const cap = captureGameRegion();
     try {
@@ -71,21 +71,12 @@ export function readMissionOnce() {
             };
         }
 
-        // 右下角“停止追踪”按钮存在，说明当前有追踪目标；模板缺失时跳过该判断。
-        const stopTemplate = getTemplate("Data/RecognitionObject/TrackButton.png");
-        if (stopTemplate) {
-            const stopButton = cap.Find(RecognitionObject.TemplateMatch(
-                stopTemplate,
-                STOP_TRACKING_REGION.x, STOP_TRACKING_REGION.y,
-                STOP_TRACKING_REGION.width, STOP_TRACKING_REGION.height
-            ));
-            result.hasTracking = !stopButton.isEmpty();
-        }
-
         const ocrRo = RecognitionObject.Ocr(roi.x, roi.y, roi.width, roi.height);
-        const texts = cap.findMulti(ocrRo);
+        // findMulti 在 BGI 宿主里返回可等待的列表对象，必须 await，否则拿到的是 Promise。
+        const texts = await cap.findMulti(ocrRo);
+        const count = texts && texts.count !== undefined ? texts.count : (texts ? texts.length : 0);
         const parts = [];
-        for (let i = 0; i < texts.count; i++) {
+        for (let i = 0; i < count; i++) {
             const text = (texts[i].text || "").trim();
             if (!text) continue;
             if (isDistanceFragment(text)) {
@@ -121,7 +112,8 @@ export function createObjectiveWatch(options = {}) {
     } = options;
 
     const listeners = [];
-    let timer = null;
+    /** 轮询代次，stop 后令旧循环自然退出（V8 运行时没有 setInterval）。 */
+    let loopToken = 0;
     let running = false;
 
     /** 当前已确认的目标 */
@@ -187,10 +179,10 @@ export function createObjectiveWatch(options = {}) {
 
     /**
      * 执行一次采样。
-     * @returns {object|null} 当前目标
+     * @returns {Promise<object|null>} 当前目标
      */
-    function poll() {
-        consume(readMissionOnce());
+    async function poll() {
+        consume(await readMissionOnce());
         return current;
     }
 
@@ -203,29 +195,37 @@ export function createObjectiveWatch(options = {}) {
         start() {
             if (running) return;
             running = true;
-            poll();
-            timer = setInterval(() => {
-                if (!running) return;
+            const token = ++loopToken;
+            // BGI 的 V8 宿主没有 setInterval，用 sleep 驱动的异步循环替代。
+            (async () => {
                 try {
-                    poll();
+                    await poll();
                 } catch (error) {
-                    log.error("任务栏轮询异常: {error}", error.message || error);
+                    log.error("任务栏首次采样异常: {error}", error.message || error);
                 }
-            }, pollInterval);
+                while (running && token === loopToken) {
+                    await sleep(pollInterval);
+                    if (!running || token !== loopToken) break;
+                    try {
+                        await poll();
+                    } catch (error) {
+                        log.error("任务栏轮询异常: {error}", error.message || error);
+                    }
+                }
+            })();
         },
         /** 停止轮询。 */
         stop() {
             running = false;
-            if (timer) clearInterval(timer);
-            timer = null;
+            loopToken++;
         },
         /** 当前目标（可能为 null）。 */
         getCurrent() {
             return current;
         },
         /** 立即读取一次，忽略确认与驻留限制，便于手工排查。 */
-        readNow() {
-            const sample = readMissionOnce();
+        async readNow() {
+            const sample = await readMissionOnce();
             return sample.ok ? parseObjective(sample.text, sample.distance) : null;
         },
     };

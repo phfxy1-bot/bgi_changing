@@ -71,7 +71,7 @@ export function createDirector(deps) {
 
         if (isKnownObjective(objective)) {
             appendSample(objective, "skipped");
-            log.info("目标已由内容库编排，QuestWatch 不接管: {raw}", objective.raw);
+            log.info("目标被跳过，仅记录样本: {raw}", objective.raw);
             return;
         }
 
