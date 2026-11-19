@@ -18,7 +18,8 @@ import { runObjective } from "./objective-runner.js";
 
     const config = typeof settings !== "undefined" && settings ? settings : {};
     const mode = config.mode === "run" ? "run" : "listen";
-    const durationSec = Number(config.duration_sec) > 0 ? Number(config.duration_sec) : 1800;
+    const durationMin = Number(config.duration_min) > 0 ? Number(config.duration_min) : 30;
+    const durationSec = durationMin * 60;
     const maxFailures = Number(config.max_failures) > 0 ? Number(config.max_failures) : 2;
 
     log.info("QuestWatch 启动，模式={mode}，时长={duration}s", mode, durationSec);
@@ -57,5 +58,5 @@ import { runObjective } from "./objective-runner.js";
     }
 
     director.stop();
-    log.info("QuestWatch 结束，已输出样本日志: Logs/quest-watch/objectives.jsonl");
+    log.info("QuestWatch 结束，已输出样本日志: Logs/quest-watch/objectives.log");
 })();

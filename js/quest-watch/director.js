@@ -11,7 +11,7 @@
 import { isRunnerSupported } from "./objective-parser.js";
 
 /** 目标样本日志路径，T5 的落盘产物，可直接作为 P0 语料。 */
-const SAMPLE_LOG_PATH = "Logs/quest-watch/objectives.jsonl";
+const SAMPLE_LOG_PATH = "Logs/quest-watch/objectives.log";
 
 /**
  * 追加一条目标样本到日志文件。

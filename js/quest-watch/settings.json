@@ -1,0 +1,35 @@
+[
+  {
+    "name": "mode",
+    "type": "select",
+    "label": "运行模式（listen=只记录不操作；run=自动追踪并执行）",
+    "options": [
+      "listen",
+      "run"
+    ],
+    "default": "listen"
+  },
+  {
+    "name": "duration_min",
+    "type": "select",
+    "label": "运行时长（分钟）",
+    "options": [
+      "10",
+      "30",
+      "60",
+      "120"
+    ],
+    "default": "30"
+  },
+  {
+    "name": "max_failures",
+    "type": "select",
+    "label": "同一目标连续失败几次后放弃",
+    "options": [
+      "1",
+      "2",
+      "3"
+    ],
+    "default": "2"
+  }
+]
