@@ -32,6 +32,17 @@ import { runObjective } from "./objective-runner.js";
 
     log.info("QuestWatch 启动，模式={mode}，时长={duration}s", mode, durationSec);
 
+    // 启动即写一行会话标记：日志文件是否存在可直接判断脚本是否真的跑过。
+    try {
+        file.WriteTextSync(
+            "Logs/quest-watch/objectives.log",
+            JSON.stringify({ ts: new Date().toISOString(), outcome: "session-start", mode }) + "\n",
+            true
+        );
+    } catch (error) {
+        log.warn("写会话标记失败: {error}", error.message || error);
+    }
+
     /**
      * 战斗回调：复用 BGI 内置 AutoFight 任务。
      * @returns {Promise<{ok: boolean, reason: string, talk: boolean}>}
