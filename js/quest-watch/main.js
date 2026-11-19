@@ -76,5 +76,10 @@ import { runObjective } from "./objective-runner.js";
     // 必须等待停止完成：残留的在途采样会在 V8 引擎销毁后访问宿主对象，
     // 触发 ObjectDisposedException（日志里的“非致命异常”即由此而来）。
     await director.stop();
+    const stats = watch.getStats ? watch.getStats() : null;
+    if (stats) {
+        log.info("采样统计 汇总: 次数={samples} 主界面={inMainUi} 读到文字={textOk} 未识别主界面={menuMissing} OCR空={ocrEmpty} 异常={exceptions}",
+            stats.samples, stats.inMainUi, stats.textOk, stats.menuMissing, stats.ocrEmpty, stats.exceptions);
+    }
     log.info("QuestWatch 结束，已输出样本日志: Logs/quest-watch/objectives.log");
 })();

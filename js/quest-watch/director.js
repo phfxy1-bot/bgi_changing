@@ -30,7 +30,7 @@ function appendSample(objective, outcome) {
             distance: objective.distance,
             previousRaw: objective.previousRaw || null,
         });
-        file.writeTextSync(SAMPLE_LOG_PATH, line + "\n", true);
+        file.WriteTextSync(SAMPLE_LOG_PATH, line + "\n", true);
     } catch (error) {
         log.warn("写入目标样本失败: {error}", error.message || error);
     }

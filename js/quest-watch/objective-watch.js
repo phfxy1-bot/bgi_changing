@@ -30,7 +30,7 @@ const templateCache = new Map();
 function getTemplate(path) {
     if (templateCache.has(path)) return templateCache.get(path);
     try {
-        const template = file.readImageMatSync(path);
+        const template = file.ReadImageMatSync(path);
         // 文件不存在时 BGI 返回空 Mat 而不抛异常，必须显式判空，否则后续匹配会报 !_src.empty()。
         if (!template || !(template.Width > 0)) {
             log.warn("模板为空，跳过该判断: {path}", path);
@@ -51,7 +51,7 @@ function getTemplate(path) {
  * @returns {Promise<{ok: boolean, text: string, distance: number|null, inMainUi: boolean}>}
  */
 export async function readMissionOnce() {
-    const result = { ok: false, text: "", distance: null, inMainUi: false };
+    const result = { ok: false, text: "", distance: null, inMainUi: false, reason: "unknown", roi: null };
 
     const cap = captureGameRegion();
     try {
@@ -60,6 +60,8 @@ export async function readMissionOnce() {
         if (template) {
             const menu = cap.find(RecognitionObject.templateMatch(template, 0, 0, 640, 216));
             if (menu.isEmpty()) {
+                // 主界面之外（对话/地图/加载）读不到任务栏，属预期；但必须留痕，否则无法区分“没在跑”和“一直在跳过”。
+                result.reason = "menu-missing";
                 return result;
             }
             result.inMainUi = true;
@@ -70,6 +72,7 @@ export async function readMissionOnce() {
                 height: MISSION_ROI_OFFSET.height,
             };
         }
+        result.roi = roi;
 
         const ocrRo = RecognitionObject.ocr(roi.x, roi.y, roi.width, roi.height);
         // findMulti 在 BGI 宿主里返回可等待的列表对象，必须 await，否则拿到的是 Promise。
@@ -87,7 +90,9 @@ export async function readMissionOnce() {
         }
         result.text = parts.join("|");
         result.ok = result.text.length > 0;
+        result.reason = result.ok ? "ok" : "ocr-empty";
     } catch (error) {
+        result.reason = "exception";
         log.warn("任务栏 OCR 异常: {error}", error.message || error);
     } finally {
         cap.dispose();
@@ -133,6 +138,50 @@ export function createObjectiveWatch(options = {}) {
     let lastEmitAt = 0;
     let lastVariantAt = 0;
     const minVariantMs = options.minVariantMs || 1000;
+
+    /**
+     * 采样诊断统计。
+     * 目的：把“脚本没跑”“一直在跳过采样”“OCR 读空”三种沉默区分开，
+     * 否则主日志里除了启动/结束什么都没有，无法定位问题。
+     */
+    const stats = { samples: 0, inMainUi: 0, textOk: 0, menuMissing: 0, ocrEmpty: 0, exceptions: 0 };
+    let lastDiagLogAt = 0;
+    let lastMissWarnAt = 0;
+    let lastEmptyWarnAt = 0;
+    let lastRoi = null;
+
+    function track(sample) {
+        stats.samples++;
+        if (sample.inMainUi) stats.inMainUi++;
+        if (sample.ok) stats.textOk++;
+        if (sample.reason === "menu-missing") stats.menuMissing++;
+        if (sample.reason === "ocr-empty") stats.ocrEmpty++;
+        if (sample.reason === "exception") stats.exceptions++;
+        if (sample.roi) lastRoi = sample.roi;
+
+        const now = Date.now();
+
+        // 每 30 秒输出一次汇总，即使零事件也能看出采样是否在工作。
+        if (now - lastDiagLogAt >= 30000) {
+            lastDiagLogAt = now;
+            log.info("采样统计 30s: 次数={samples} 主界面={inMainUi} 读到文字={textOk} 未识别主界面={menuMissing} OCR空={ocrEmpty} 异常={exceptions}",
+                stats.samples, stats.inMainUi, stats.textOk, stats.menuMissing, stats.ocrEmpty, stats.exceptions);
+        }
+
+        // 连续未识别主界面：多半是分辨率/缩放与模板不匹配，或一直停在对话/地图。
+        if (sample.reason === "menu-missing" && now - lastMissWarnAt >= 30000) {
+            lastMissWarnAt = now;
+            log.warn("未识别到主界面（派蒙图标未匹配），已跳过采样；若持续出现请检查游戏分辨率与 Data/RecognitionObject/paimon_menu.png");
+        }
+
+        // 主界面已确认但读不到任务栏文字：ROI 偏移或该目标栏为空。
+        if (sample.reason === "ocr-empty" && now - lastEmptyWarnAt >= 30000) {
+            lastEmptyWarnAt = now;
+            const roi = lastRoi || MISSION_ROI_OFFSET;
+            log.warn("主界面已识别但任务栏 OCR 为空，ROI=({x},{y},{w},{h})",
+                roi.x, roi.y, roi.width, roi.height);
+        }
+    }
 
     /**
      * 处理一次采样结果。
@@ -211,7 +260,9 @@ export function createObjectiveWatch(options = {}) {
      * @returns {Promise<object|null>} 当前目标
      */
     async function poll() {
-        consume(await readMissionOnce());
+        const sample = await readMissionOnce();
+        track(sample);
+        consume(sample);
         return current;
     }
 
@@ -267,6 +318,10 @@ export function createObjectiveWatch(options = {}) {
                     // 停止阶段的异常无需上报，调用方只关心是否已静默。
                 }
             }
+        },
+        /** 采样诊断统计，供结束日志汇总。 */
+        getStats() {
+            return { ...stats };
         },
         /** 当前目标（可能为 null）。 */
         getCurrent() {
