@@ -51,8 +51,8 @@ import { runObjective } from "./objective-runner.js";
     const director = createDirector({
         watch,
         runner: { runObjective },
-        // 监听模式把一切目标视为“已编排”，只记录不执行。
-        isKnownObjective: () => mode === "listen",
+        // 监听模式只落样本，不执行任何键鼠动作。
+        dryRun: mode === "listen",
         maxFailures,
         runOptions: { runCombat, delegateDialogue: config.delegate_dialogue !== false },
         onGiveUp: (objective) => log.warn("放弃目标，需要人工处理: {raw}", objective.raw),

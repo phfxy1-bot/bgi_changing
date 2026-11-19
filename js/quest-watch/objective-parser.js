@@ -57,15 +57,25 @@ export function normalizeObjective(text) {
 }
 
 /**
+ * 距离上限（米）。
+ * 追踪栏 OCR 偶发把相邻数字拼进来；样本里出现过 10345 这类不合理值，
+ * 超过上限按“距离未知”处理（null），避免触发错误的传送决策。
+ */
+export const MAX_PLAUSIBLE_DISTANCE = 5000;
+
+/**
  * 从文本中解析距离（米）。
  * @param {string} text 原始文本
- * @returns {number|null} 距离，无法解析时为 null
+ * @returns {number|null} 距离，无法解析或数值不合理时为 null
  */
 export function parseDistance(text) {
     if (!text) return null;
     const normalized = String(text).replace(/[oO]/g, "0");
     const match = normalized.match(/(\d+)\s*(m|米)/i);
-    return match ? Number(match[1]) : null;
+    if (!match) return null;
+    const value = Number(match[1]);
+    if (!Number.isFinite(value) || value <= 0 || value > MAX_PLAUSIBLE_DISTANCE) return null;
+    return value;
 }
 
 /**

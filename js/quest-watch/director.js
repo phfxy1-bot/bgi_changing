@@ -54,6 +54,7 @@ export function createDirector(deps) {
         onGiveUp = null,
         maxFailures = 2,
         runOptions = {},
+        dryRun = false,
     } = deps;
 
     /** 同一目标的连续失败计数 */
@@ -70,6 +71,13 @@ export function createDirector(deps) {
      */
     async function handle(objective, previous) {
         if (!running) return;
+
+        // 监听模式：只落样本，不驱动键鼠。
+        if (dryRun) {
+            appendSample(objective, "observed");
+            log.info("监听模式记录样本: {raw}", objective.raw);
+            return;
+        }
 
         if (isKnownObjective(objective)) {
             appendSample(objective, "skipped");
