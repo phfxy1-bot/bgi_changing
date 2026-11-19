@@ -7,6 +7,14 @@
  * 模式（settings.mode，缺省 listen）：
  * - listen：只监听并记录目标变化，不操作键鼠，用于 T1 验收；
  * - run：由导演层接管未编排目标，自动追踪、导航、交互，用于 T2/T3 验收。
+ *
+ * 设置项（settings.json，均可省略）：
+ * - mode：listen / run；
+ * - duration_min：运行时长（分钟，默认 30）；
+ * - max_failures：同一目标连续失败上限（默认 2）；
+ * - delegate_dialogue：对话是否交给 BGI「自动剧情」推进（默认 true）。
+ *   为 true 时本脚本只等待对话结束，不点击选项，避免和自动剧情抢操作；
+ *   为 false 时由脚本自己点击推进（需关闭自动剧情）。
  */
 
 import { createObjectiveWatch } from "./objective-watch.js";
@@ -46,7 +54,7 @@ import { runObjective } from "./objective-runner.js";
         // 监听模式把一切目标视为“已编排”，只记录不执行。
         isKnownObjective: () => mode === "listen",
         maxFailures,
-        runOptions: { runCombat },
+        runOptions: { runCombat, delegateDialogue: config.delegate_dialogue !== false },
         onGiveUp: (objective) => log.warn("放弃目标，需要人工处理: {raw}", objective.raw),
     });
 

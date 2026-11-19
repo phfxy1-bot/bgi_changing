@@ -531,6 +531,38 @@ async function advanceDialogue(target, timeoutMs = 90000) {
 }
 
 /**
+ * 等待对话结束（不点击）。用于把对话推进交给 BGI 内置「自动剧情」的场景：
+ * 两边同时点击会抢操作、选项选择也会互相矛盾，因此这里只做观察。
+ * @param {number} timeoutMs 超时
+ * @returns {Promise<{ok: boolean, reason: string}>}
+ */
+async function waitDialogueEnd(timeoutMs = 120000) {
+    const deadline = Date.now() + timeoutMs;
+    let absent = 0;
+
+    while (Date.now() < deadline) {
+        let cap = null;
+        let talking = false;
+        try {
+            cap = captureGameRegion();
+            talking = isTalkUi(cap);
+        } finally {
+            if (cap) cap.dispose();
+        }
+
+        if (!talking) {
+            absent++;
+            // 过场黑屏也会短暂看不到对话气泡，连续 3 次再判定结束。
+            if (absent >= 3) return { ok: true, reason: "dialog-delegated" };
+        } else {
+            absent = 0;
+        }
+        await sleep(800);
+    }
+    return { ok: false, reason: "dialog-timeout" };
+}
+
+/**
  * 追踪并移动到目标图标，带卡死检测与侧移恢复。
  * @param {object} iconRo 图标识别对象
  * @param {object} [options]
@@ -653,6 +685,8 @@ export async function navigateToIcon(iconRo, options = {}) {
  * @param {object} [options.runCombat] 战斗回调（由上层注入，默认不支持）
  * @param {string} [options.interactKey="f"]
  * @param {boolean} [options.allowTeleport=true] 是否允许远距离传送
+ * @param {boolean} [options.delegateDialogue=true] 对话是否交给 BGI「自动剧情」，本脚本只等待结束
+ * @param {number} [options.dialogTimeoutMs] 对话等待超时
  * @returns {Promise<{ok: boolean, reason: string, talk: boolean}>}
  */
 export async function runObjective(objective, options = {}) {
@@ -669,6 +703,11 @@ export async function runObjective(objective, options = {}) {
 
     const interactKey = options.interactKey || "f";
     const allowTeleport = options.allowTeleport !== false;
+    // 对话默认交给 BGI 内置「自动剧情」推进，本脚本只等待其结束，避免双方抢点击。
+    const delegateDialogue = options.delegateDialogue !== false;
+    const runDialog = (target) => (delegateDialogue
+        ? waitDialogueEnd(options.dialogTimeoutMs)
+        : advanceDialogue(target, options.dialogTimeoutMs));
 
     switch (objective.type) {
         case OBJECTIVE_TYPE.TALK: {
@@ -682,7 +721,7 @@ export async function runObjective(objective, options = {}) {
                 timeoutMs: options.timeoutMs,
             });
             if (!nav.ok) return nav;
-            const dialog = await advanceDialogue(objective.target, options.dialogTimeoutMs);
+            const dialog = await runDialog(objective.target);
             return { ok: dialog.ok, reason: dialog.reason, talk: true };
         }
 
@@ -714,7 +753,7 @@ export async function runObjective(objective, options = {}) {
             if (!nav.ok) return nav;
             const interaction = await interactAtTarget(interactKey);
             if (interaction.talk) {
-                const dialog = await advanceDialogue(objective.target, options.dialogTimeoutMs);
+                const dialog = await runDialog(objective.target);
                 return { ok: dialog.ok, reason: dialog.reason, talk: true };
             }
             return { ok: true, reason: "interacted", talk: false };
