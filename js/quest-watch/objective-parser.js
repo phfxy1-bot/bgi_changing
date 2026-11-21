@@ -116,14 +116,39 @@ export function extractTarget(text, type) {
 }
 
 /**
+ * 追踪栏里的附加行：状态提示与任务标题标签，不是目标本身。
+ * 它们会时有时无（“已到达任务区域”出现/消失），不能参与目标比对。
+ */
+const STATUS_PART = /^(已到达任务区域|位于其它地图层级|任务完成|任务达成|任务专注模式)/;
+
+/**
+ * 从多段 OCR 文本中挑出真正的目标行。
+ * 实测追踪栏形如 “任务标题|目标|状态”，目标是最后一个非状态段。
+ * 若整条只有一个状态段（如只读到 “已到达任务区域”），返回空串表示“本次没有新目标”。
+ * @param {string[]} parts 按 | 切开的文本段
+ * @returns {string}
+ */
+function pickObjectivePart(parts) {
+    for (let index = parts.length - 1; index >= 0; index--) {
+        const part = parts[index].trim();
+        if (part && !STATUS_PART.test(part)) return part;
+    }
+    return "";
+}
+
+/**
  * 解析一条任务目标。
  * @param {string} rawText 追踪栏 OCR 拼接后的文本
  * @param {number|null} [distance] 单独识别出的距离，优先于文本内距离
- * @returns {{raw: string, normalized: string, type: string, target: string, distance: number|null}}
+ * @returns {{raw: string, core: string, normalized: string, type: string, target: string, distance: number|null}}
  */
 export function parseObjective(rawText, distance = null) {
     const raw = String(rawText || "").trim();
-    const normalized = normalizeObjective(raw);
+    const parts = raw.split("|").map(part => part.trim()).filter(Boolean);
+    // 只对目标行做归一化与分类：任务标题每天都会 OCR 抖（饿/饯），状态行时有时无，
+    // 它们参与比对会把同一个目标误判成变化。
+    const core = pickObjectivePart(parts);
+    const normalized = normalizeObjective(core);
     let type = OBJECTIVE_TYPE.UNKNOWN;
 
     for (const rule of RULES) {
@@ -135,9 +160,10 @@ export function parseObjective(rawText, distance = null) {
 
     return {
         raw,
+        core,
         normalized,
         type,
-        target: extractTarget(raw, type),
+        target: extractTarget(core, type),
         distance: distance !== null && distance !== undefined ? distance : parseDistance(raw),
     };
 }
