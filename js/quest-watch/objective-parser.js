@@ -34,11 +34,11 @@ export const OBJECTIVE_TYPE = Object.freeze({
 const RULES = [
     { type: OBJECTIVE_TYPE.ESCORT, patterns: [/护送/] },
     { type: OBJECTIVE_TYPE.FOLLOW, patterns: [/跟随/, /陪同/, /跟上/] },
-    { type: OBJECTIVE_TYPE.COMBAT, patterns: [/击败/, /消灭/, /清除/, /讨伐/, /击退/, /打倒/] },
+    { type: OBJECTIVE_TYPE.COMBAT, patterns: [/击败/, /消灭/, /清除/, /讨伐/, /击退/, /打倒/, /敌人/] },
     { type: OBJECTIVE_TYPE.COLLECT, patterns: [/收集/, /采集/, /拾取/, /获取/, /找到/] },
-    { type: OBJECTIVE_TYPE.INTERACT, patterns: [/调查/, /搜寻/, /查看/, /开启/, /触碰/, /阅读/, /使用/, /观察/, /召唤/] },
-    { type: OBJECTIVE_TYPE.TALK, patterns: [/对话/, /交谈/, /询问/, /打听/, /说明/, /联络/] },
-    { type: OBJECTIVE_TYPE.NAVIGATE, patterns: [/前往/, /到达/, /移动至/, /回到/, /离开/, /进入/, /寻找/, /找寻/] },
+    { type: OBJECTIVE_TYPE.INTERACT, patterns: [/调查/, /搜寻/, /查看/, /开启/, /触碰/, /阅读/, /使用/, /观察/, /召唤/, /补给/] },
+    { type: OBJECTIVE_TYPE.TALK, patterns: [/对话/, /交谈/, /询问/, /打听/, /说明/, /联络/, /告知/, /汇报/] },
+    { type: OBJECTIVE_TYPE.NAVIGATE, patterns: [/前往/, /到达/, /移动至/, /回到/, /离开/, /进入/, /寻找/, /找寻/, /返回/] },
 ];
 
 /**
@@ -117,9 +117,27 @@ export function extractTarget(text, type) {
 
 /**
  * 追踪栏里的附加行：状态提示与任务标题标签，不是目标本身。
- * 它们会时有时无（“已到达任务区域”出现/消失），不能参与目标比对。
+ * 它们会时有时无（“已到达任务区域”出现/消失、OCR 把它切成“已到达|任务区域”），
+ * 不能参与目标比对。
  */
-const STATUS_PART = /^(已到达任务区域|位于其它地图层级|任务完成|任务达成|任务专注模式)/;
+const STATUS_PART = /^(已到达|到达任务区域|任务区域$|位于其它|任务完成|任务达成|任务专注模式)/;
+
+/**
+ * 覆盖在追踪栏上的提示条（新任务/新章节），整条都不是目标。
+ */
+const BANNER_PART = /^(新任务|新章节|任务专注模式|第.+[幕章])$/;
+
+/**
+ * 按关键词规则判断目标类型。
+ * @param {string} text 归一化文本
+ * @returns {string}
+ */
+function classify(text) {
+    for (const rule of RULES) {
+        if (rule.patterns.some(pattern => pattern.test(text))) return rule.type;
+    }
+    return OBJECTIVE_TYPE.UNKNOWN;
+}
 
 /**
  * 从多段 OCR 文本中挑出真正的目标行。
@@ -129,11 +147,27 @@ const STATUS_PART = /^(已到达任务区域|位于其它地图层级|任务完�
  * @returns {string}
  */
 function pickObjectivePart(parts) {
-    for (let index = parts.length - 1; index >= 0; index--) {
+    if (parts.some(part => BANNER_PART.test(part))) return "";
+    let index = parts.length - 1;
+    let core = "";
+    for (; index >= 0; index--) {
         const part = parts[index].trim();
-        if (part && !STATUS_PART.test(part)) return part;
+        if (part && !STATUS_PART.test(part)) {
+            core = part;
+            break;
+        }
     }
-    return "";
+    if (!core || classify(normalizeObjective(core)) !== OBJECTIVE_TYPE.UNKNOWN) return core;
+    // 目标折行时会被切成多段（“解决月台另|边的敌人”），向左合并到能识别出动作为止；
+    // 合并后仍识别不出动作就保持原样，避免把任务标题拼进目标。
+    let candidate = core;
+    for (let left = index - 1; left >= 0; left--) {
+        const part = parts[left].trim();
+        if (!part || STATUS_PART.test(part)) break;
+        candidate = part + candidate;
+        if (classify(normalizeObjective(candidate)) !== OBJECTIVE_TYPE.UNKNOWN) return candidate;
+    }
+    return core;
 }
 
 /**
@@ -149,14 +183,7 @@ export function parseObjective(rawText, distance = null) {
     // 它们参与比对会把同一个目标误判成变化。
     const core = pickObjectivePart(parts);
     const normalized = normalizeObjective(core);
-    let type = OBJECTIVE_TYPE.UNKNOWN;
-
-    for (const rule of RULES) {
-        if (rule.patterns.some(pattern => pattern.test(normalized))) {
-            type = rule.type;
-            break;
-        }
-    }
+    const type = classify(normalized);
 
     return {
         raw,

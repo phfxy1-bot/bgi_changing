@@ -123,6 +123,20 @@ export async function readMissionOnce() {
 }
 
 /**
+ * OCR 偶尔少认/多认一个字（“解决突然出现的敌人” / “解决突然出现的敌”），
+ * 归一化文本只差 1 个字且互为前后缀时按同一目标处理。
+ * @param {string} a 归一化文本
+ * @param {string} b 归一化文本
+ * @returns {boolean}
+ */
+function isOcrTruncation(a, b) {
+    if (!a || !b || a === b) return false;
+    const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+    if (longer.length - shorter.length !== 1) return false;
+    return longer.startsWith(shorter) || longer.endsWith(shorter);
+}
+
+/**
  * 创建任务变更监听器。
  * @param {object} [options]
  * @param {number} [options.pollInterval=1000] 采样间隔（毫秒）
@@ -217,12 +231,22 @@ export function createObjectiveWatch(options = {}) {
         const objective = parseObjective(sample.text, sample.distance);
         if (!objective.normalized) return;
 
-        if (current && objective.normalized === current.normalized) {
+        if (current && (objective.normalized === current.normalized
+                || isOcrTruncation(objective.normalized, current.normalized))) {
+            // OCR 多认出一个字时，采用更长的写法作为规范文本。
+            if (objective.normalized.length > current.normalized.length) {
+                current.raw = objective.raw;
+                current.core = objective.core;
+                current.normalized = objective.normalized;
+                current.type = objective.type;
+                current.target = objective.target;
+            }
             // 目标未变，仅刷新距离；若目标行文字变了（如进度计数），单独通知订阅者。
             current.distance = objective.distance;
             pending = null;
             pendingCount = 0;
-            if (sample.text !== current.raw) {
+            // 少认一个字属于 OCR 抖动，不重复打印“目标内文字变化”。
+            if (sample.text !== current.raw && !isOcrTruncation(objective.core, current.core)) {
                 const previousRaw = current.raw;
                 // 标题行/状态行不参与比对，所以这里只可能是目标行本身的变化。
                 const realVariant = stripPunctuation(objective.core) !== stripPunctuation(current.core);
