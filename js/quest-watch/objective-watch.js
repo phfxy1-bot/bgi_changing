@@ -231,9 +231,12 @@ export function createObjectiveWatch(options = {}) {
         const objective = parseObjective(sample.text, sample.distance);
         if (!objective.normalized) return;
 
-        if (current && (objective.normalized === current.normalized
+        const sameCore = current && objective.normalized === current.normalized;
+        // 同一目标被 OCR 折行成多段时 core 会不同，但整条文本（去掉分隔竖线）相同。
+        const sameText = current && objective.fullNormalized === current.fullNormalized;
+        if (current && (sameCore || sameText
                 || isOcrTruncation(objective.normalized, current.normalized))) {
-            // OCR 多认出一个字时，采用更长的写法作为规范文本。
+            // OCR 多认出一个字或把折行拼回来时，采用更长的写法作为规范文本。
             if (objective.normalized.length > current.normalized.length) {
                 current.raw = objective.raw;
                 current.core = objective.core;
@@ -241,12 +244,13 @@ export function createObjectiveWatch(options = {}) {
                 current.type = objective.type;
                 current.target = objective.target;
             }
+            current.fullNormalized = objective.fullNormalized;
             // 目标未变，仅刷新距离；若目标行文字变了（如进度计数），单独通知订阅者。
             current.distance = objective.distance;
             pending = null;
             pendingCount = 0;
-            // 少认一个字属于 OCR 抖动，不重复打印“目标内文字变化”。
-            if (sample.text !== current.raw && !isOcrTruncation(objective.core, current.core)) {
+            // 折行只是分段竖线不同，以及少认一个字，都属于 OCR 抖动，不重复打印。
+            if (!sameText && sample.text !== current.raw && !isOcrTruncation(objective.core, current.core)) {
                 const previousRaw = current.raw;
                 // 标题行/状态行不参与比对，所以这里只可能是目标行本身的变化。
                 const realVariant = stripPunctuation(objective.core) !== stripPunctuation(current.core);
@@ -269,7 +273,8 @@ export function createObjectiveWatch(options = {}) {
             return;
         }
 
-        if (pending && objective.normalized === pending.normalized) {
+        if (pending && (objective.normalized === pending.normalized
+                || objective.fullNormalized === pending.fullNormalized)) {
             pendingCount++;
             pending.distance = objective.distance;
         } else {

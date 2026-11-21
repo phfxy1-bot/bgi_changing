@@ -34,11 +34,11 @@ export const OBJECTIVE_TYPE = Object.freeze({
 const RULES = [
     { type: OBJECTIVE_TYPE.ESCORT, patterns: [/护送/] },
     { type: OBJECTIVE_TYPE.FOLLOW, patterns: [/跟随/, /陪同/, /跟上/] },
-    { type: OBJECTIVE_TYPE.COMBAT, patterns: [/击败/, /消灭/, /清除/, /讨伐/, /击退/, /打倒/, /敌人/] },
+    { type: OBJECTIVE_TYPE.COMBAT, patterns: [/击败/, /消灭/, /清除/, /讨伐/, /击退/, /打倒/, /敌人/, /敌袭/, /对抗/] },
     { type: OBJECTIVE_TYPE.COLLECT, patterns: [/收集/, /采集/, /拾取/, /获取/, /找到/] },
     { type: OBJECTIVE_TYPE.INTERACT, patterns: [/调查/, /搜寻/, /查看/, /开启/, /触碰/, /阅读/, /使用/, /观察/, /召唤/, /补给/] },
     { type: OBJECTIVE_TYPE.TALK, patterns: [/对话/, /交谈/, /询问/, /打听/, /说明/, /联络/, /告知/, /汇报/] },
-    { type: OBJECTIVE_TYPE.NAVIGATE, patterns: [/前往/, /到达/, /移动至/, /回到/, /离开/, /进入/, /寻找/, /找寻/, /返回/] },
+    { type: OBJECTIVE_TYPE.NAVIGATE, patterns: [/前往/, /到达/, /移动至/, /回到/, /离开/, /进入/, /寻找/, /找寻/, /返回/, /飞向/, /赶赴/] },
 ];
 
 /**
@@ -120,12 +120,18 @@ export function extractTarget(text, type) {
  * 它们会时有时无（“已到达任务区域”出现/消失、OCR 把它切成“已到达|任务区域”），
  * 不能参与目标比对。
  */
-const STATUS_PART = /^(已到达|到达任务区域|任务区域$|位于其它|任务完成|任务达成|任务专注模式)/;
+const STATUS_PART = /^(?:已到达|到达任务区域|位于其它|任务区域|任务完成|任务达成|任务专注模式|\[?[Vv]\]?\s*查看任务线索)/;
 
 /**
  * 覆盖在追踪栏上的提示条（新任务/新章节），整条都不是目标。
  */
 const BANNER_PART = /^(新任务|新章节|任务专注模式|第.+[幕章])$/;
+
+/**
+ * 任务完成提示：此时追踪栏只剩任务标题，不能把标题当成新目标，
+ * 等待下一帧出现真正的后续目标。
+ */
+const COMPLETED_PART = /^任务(完成|达成)$/;
 
 /**
  * 按关键词规则判断目标类型。
@@ -148,6 +154,8 @@ function classify(text) {
  */
 function pickObjectivePart(parts) {
     if (parts.some(part => BANNER_PART.test(part))) return "";
+    // 任务完成时追踪栏只剩任务标题，不把标题当成新目标。
+    if (parts.some(part => COMPLETED_PART.test(part))) return "";
     let index = parts.length - 1;
     let core = "";
     for (; index >= 0; index--) {
@@ -174,7 +182,7 @@ function pickObjectivePart(parts) {
  * 解析一条任务目标。
  * @param {string} rawText 追踪栏 OCR 拼接后的文本
  * @param {number|null} [distance] 单独识别出的距离，优先于文本内距离
- * @returns {{raw: string, core: string, normalized: string, type: string, target: string, distance: number|null}}
+ * @returns {{raw: string, core: string, normalized: string, fullNormalized: string, type: string, target: string, distance: number|null}}
  */
 export function parseObjective(rawText, distance = null) {
     const raw = String(rawText || "").trim();
@@ -183,12 +191,16 @@ export function parseObjective(rawText, distance = null) {
     // 它们参与比对会把同一个目标误判成变化。
     const core = pickObjectivePart(parts);
     const normalized = normalizeObjective(core);
+    // 整条文本的指纹：同一目标被 OCR 折行成 “利用相位之门，|前往天云”
+    // 与单段 “利用相位之门，前往天云” 时，core 不同但整条相同，用它兜底。
+    const fullNormalized = normalizeObjective(parts.join(""));
     const type = classify(normalized);
 
     return {
         raw,
         core,
         normalized,
+        fullNormalized,
         type,
         target: extractTarget(core, type),
         distance: distance !== null && distance !== undefined ? distance : parseDistance(raw),
